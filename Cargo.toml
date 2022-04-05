@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+owo-colors = "3"
 regex = "1.5.5"
 lazy_static = "*"
 native-dialog = "0.6.3"

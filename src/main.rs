@@ -2,6 +2,7 @@
 extern crate lazy_static;
 use std::error::Error;
 use regex::Regex;
+use owo_colors::OwoColorize;
 use std::ops;
 use std::fmt;
 use std::env;
@@ -20,15 +21,34 @@ const MAX_OFFSET: f32 = 0.75; //fail offset check if southwest part corner is fu
 
 fn main() {
     let path = get_path().unwrap();
+    let contents = get_file(path.clone()).unwrap();
 
-    let contents = fs::read_to_string(path.clone())
-        .expect("Something went wrong reading the file");
 
-    println!("file {:?}:",path);
+    println!("Validating file \'{}\'...",path.display());
     let results = check(&contents);
-    for result in results {
+
+    let passed: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Pass).collect();
+    let failed: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Fail).collect();
+    let warnings: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Warning).collect();
+    let errors: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Error).collect();
+
+    let status = format!("Complete: {} passed, {} failed, {} warnings, {} errors", passed.len(), failed.len(), warnings.len(), errors.len());
+    println!("{}",status);
+    println!("--------------------------------------------------");
+    for result in failed {
         println!("{}",result);
     };
+    for result in warnings {
+        println!("{}",result);
+    };
+    for result in errors {
+        println!("{}",result);
+    };
+    for result in passed {
+        println!("{}",result);
+    };
+    println!("--------------------------------------------------");
+    println!("              press Ctrl-C to exit                ");
     loop {}
 }
 
@@ -80,7 +100,7 @@ fn check(contents: &String) -> Vec<Outcome> {
     ]
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq,Clone)]
 enum Tool {
     Drill,
     Endmill,
@@ -121,11 +141,11 @@ fn check_depth(min: Point, material_size: Point) -> Outcome {
             let max_depth = thickness - min.z.unwrap();
             if max_depth > thickness + DEPTH_THRESHOLD {
                 return out.set(Status::Fail,
-                    format!("toolpath may be cutting too deep:\nmaterial thickness: {}\nmax cut depth: {}",thickness,max_depth)
+                    format!("may cut too deep:\nmaterial thickness: {}\nmax cut depth: {}",thickness,max_depth)
                 );
             } else if max_depth < thickness {
                 return out.set(Status::Fail,
-                    format!("toolpath may not cut through material:\nmaterial thickness: {}\nmax cut depth: {}",thickness,max_depth)
+                    format!("may not cut through material:\nmaterial thickness: {}\nmax cut depth: {}",thickness,max_depth)
                 );
             } else {
                 return out.set(Status::Pass,
@@ -162,6 +182,7 @@ fn check_offset(min: Point) -> Outcome {
     );
 }
 
+#[derive(Clone)]
 struct Outcome {
     name: String,
     message: String,
@@ -193,10 +214,18 @@ impl fmt::Display for Outcome {
         let mut message = self.message.clone();
         message.insert_str(0," > ");
         message = message.replace('\n', "\n    ");
-        write!(f, "{}: [{}]\n{}", self.name, self.status, message)
+        match self.status {
+            Status::Pass => {
+                write!(f, "[{}] {}:\n{}", self.status, self.name, message.cyan())
+            }
+            _=> {
+                write!(f, "[{}] {}:\n{}", self.status, self.name, message.red())
+            }
+        }
     }
 }
 
+#[derive(PartialEq, Clone)]
 enum Status {
     Pass,
     Fail,
@@ -206,14 +235,16 @@ enum Status {
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Status::Pass => write!(f,"PASS"),
-            Status::Fail => write!(f,"FAIL"),
-            Status::Warning => write!(f,"WARNING"),
-            Status::Error => write!(f,"ERROR"),
+            Status::Pass => write!(f,"{}","PASS".green()),
+            Status::Fail => write!(f,"{}","FAIL".red()),
+            Status::Warning => write!(f,"{}","WARNING".yellow()),
+            Status::Error => write!(f,"{}","ERROR".red()),
         }
     }
 }
-
+fn get_file(path: path::PathBuf) -> Result<String,String> {
+    fs::read_to_string(path.clone()).map_err(|_| format!("couldn't read file: '{}'", path.display()))
+}
 fn get_path() -> Result<path::PathBuf,String> {
     if env::args().len() > 1 {
         let path = env::args().nth(1).unwrap();
