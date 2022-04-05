@@ -12,7 +12,7 @@ use native_dialog::{FileDialog, MessageDialog, MessageType};
 
 
 const PASS_FREQUENCY_THRESHOLD: usize = 80; //require at least this many lines of g-code in each pass
-const MIN_PASSES: usize = 2; //emit a warning if there are fewer than this number of passes
+const MIN_PASSES: usize = 2; //emit a warning if there are less than or equal to this number of passes
 const MAX_PASSES: usize = 10; //consider the program to be in error if it finds more passes than this
 const DEPTH_THRESHOLD: f32 = 0.0625; //the maximum amount the endmill should be allowed to cut into the table
 const MIN_OFFSET: f32 = -0.1; //fail offset check if southwest part corner is further southwest than this
@@ -33,52 +33,64 @@ fn main() {
 }
 
 fn check(contents: &String) -> Vec<Outcome> {
+    let mut tool = Tool::Unknown;
     let mut min = Point::empty();
     let mut cut_min = Point::empty();
     let mut material_size = Point::empty();
-    let mut depths: HashMap<i32,usize> = HashMap::new();
+    let mut heights: HashMap<i32,usize> = HashMap::new();
 
     for line in contents.lines() {
-        if line.starts_with("(") && line.ends_with(")") {
+        if line.find("G0").is_some() || line.find("G1").is_some() { //moving
+            let point = Point::from_str(line);
+            min = min.min(point);
+            if point.z.is_some() && material_size.z.is_some() { //has z coordinate
+                let height = point.z.unwrap();
+                cut_min = cut_min.min(point);
+                if height < material_size.z.unwrap() {
+                    if tool == Tool::Endmill {
+                        let height_int = (height * 1000.0) as i32;
+                        let mut count = heights.get_mut(&height_int);
+                        if let Some(t) = count {
+                            *t += 1
+                        } else {
+                            heights.insert(height_int,1);
+                        }
+                    }
+                }
+            }
+        }
+        else if line.find("(").is_some() && line.find(")").is_some() {
             let point = Point::from_str(line);
             if material_size.is_empty() && !point.is_empty() {
                 material_size = point;
             }
-        }
-        if line.find("G0").is_some() || line.find("G1").is_some() {
-            let point = Point::from_str(line);
-            min = min.min(point);
-            if point.z.is_some() && material_size.z.is_some() {
-                let depth = point.z.unwrap();
-                if depth < material_size.z.unwrap() {
-                    cut_min = cut_min.min(point);
-                }
-                let depth_int = (depth * 1000.0) as i32;
-                let mut count = depths.get_mut(&depth_int);
-                if let Some(t) = count {
-                    *t += 1
-                } else {
-                    depths.insert(depth_int,1);
-                }
+            if line.find("Tool: Drill").is_some() {
+                tool = Tool::Drill;
+            } else if line.find("Tool: End Mill").is_some() {
+                tool = Tool::Endmill;
             }
         }
     }
-    println!("{:?}",depths);
 
    
-    println!("{:?}",material_size);
-    println!("{:?}",min);
     vec![
         check_depth(min,material_size),
         check_offset(cut_min),
-        check_passes(depths),
+        check_passes(heights),
     ]
 }
 
-fn check_passes(depths: HashMap<i32,usize>) -> Outcome {
-    let mut out = Outcome::new("Check Passes");
+#[derive(PartialEq)]
+enum Tool {
+    Drill,
+    Endmill,
+    Unknown,
+}
+
+fn check_passes(heights: HashMap<i32,usize>) -> Outcome {
+    let mut out = Outcome::new("Number of Passes");
     let mut passes = 0;
-    for (depth,freq) in depths {
+    for (height,freq) in heights {
         if freq > PASS_FREQUENCY_THRESHOLD {
             passes += 1;
         }
@@ -102,7 +114,7 @@ fn check_passes(depths: HashMap<i32,usize>) -> Outcome {
 
 
 fn check_depth(min: Point, material_size: Point) -> Outcome {
-    let mut out = Outcome::new("Check Depth");
+    let mut out = Outcome::new("Depth");
     if material_size.z.is_some() {
         let thickness = material_size.z.unwrap();
         if min.z.is_some() {
@@ -127,7 +139,7 @@ fn check_depth(min: Point, material_size: Point) -> Outcome {
     );
 }
 fn check_offset(min: Point) -> Outcome {
-    let mut out = Outcome::new("Check Offset");
+    let mut out = Outcome::new("Offset");
     if min.x.is_some() && min.y.is_some() {
         for i in 0..2 {
             if min[i].unwrap() > MAX_OFFSET {
@@ -161,6 +173,13 @@ impl Outcome {
             name: name.into(),
             message: "if you are reading this, there is a bug in the code.".into(),
             status: Status::Error,
+        }
+    }
+    fn new_full(name: &str, status: Status, message: String) -> Outcome {
+        Outcome {
+            name: name.into(),
+            status: status,
+            message: message,
         }
     }
     fn set(mut self, status: Status, message: String) -> Outcome {
