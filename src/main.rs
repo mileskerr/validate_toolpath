@@ -11,6 +11,8 @@ use native_dialog::{FileDialog, MessageDialog, MessageType};
 
 
 const DEPTH_THRESHOLD: f32 = 0.0625;
+const MIN_OFFSET: f32 = -0.1;
+const MAX_OFFSET: f32 = 0.75;
 
 fn main() {
     let path = get_path().unwrap();
@@ -27,8 +29,8 @@ fn main() {
 }
 
 fn check(contents: &String) -> Vec<Outcome> {
-    let mut slow_min = Point::empty();
-    let mut rapid_min = Point::empty();
+    let mut min = Point::empty();
+    let mut cut_min = Point::empty();
     let mut material_size = Point::empty();
 
     for line in contents.lines() {
@@ -38,19 +40,23 @@ fn check(contents: &String) -> Vec<Outcome> {
                 material_size = point;
             }
         }
-        if line.find("G1").is_some() {
+        if line.find("G0").is_some() || line.find("G1").is_some() {
             let point = Point::from_str(line);
-            slow_min = slow_min.min(point);
-        }
-        if line.find("G2").is_some() {
-            let point = Point::from_str(line);
-            rapid_min = rapid_min.min(point);
+            min = min.min(point);
+            if point.z.is_some() && material_size.z.is_some() {
+                if point.z.unwrap() < material_size.z.unwrap() {
+                    cut_min = cut_min.min(point);
+                }
+            }
         }
     }
 
-    
+   
+    println!("{:?}",material_size);
+    println!("{:?}",min);
     vec![
-        check_depth(slow_min,material_size),
+        check_depth(min,material_size),
+        check_offset(cut_min),
     ]
 }
 
@@ -76,7 +82,30 @@ fn check_depth(min: Point, material_size: Point) -> Outcome {
         }
     }
     return out.set(Status::Error,
-        "unable to check depth. This is either a bug or an invalid toolpath".into()
+        "unable to check depth. This is may be a bug".into()
+    );
+}
+fn check_offset(min: Point) -> Outcome {
+    let mut out = Outcome::new("Check Offset");
+    if min.x.is_some() && min.y.is_some() {
+        for i in 0..2 {
+            if min[i].unwrap() > MAX_OFFSET {
+                return out.set(Status::Fail,
+                    format!("toolpath may be offset:\nsouthwest corner of part is far from the origin, at ({}, {})",min.x.unwrap(),min.y.unwrap())
+                );
+            }
+            if min[i].unwrap() < MIN_OFFSET {
+                return out.set(Status::Fail,
+                    format!("toolpath may be offset:\nsouthwest corner of part is negative, at ({}, {})",min.x.unwrap(),min.y.unwrap())
+                );
+            }
+        }
+        return out.set(Status::Pass,
+            format!("( southeast corner of part is near the origin, at ({}, {}) )",min.x.unwrap(), min.y.unwrap())
+        );
+    }
+    return out.set(Status::Error,
+        "unable to check offset. This is may be a bug".into()
     );
 }
 
@@ -177,8 +206,8 @@ impl Point {
     fn min(&self, other: Point) -> Point {
         let mut new = Point::empty();
         for i in 0..3 {
-            new[i] = if self.x.is_some() {
-                other[i].map(|v| v.min(self[i].unwrap()))
+            new[i] = if self[i].is_some() {
+                other[i].map_or(self[i],|v| Some(v.min(self[i].unwrap())))
             } else { other[i] };
         }
         new
@@ -186,8 +215,8 @@ impl Point {
     fn max(&self, other: Point) -> Point {
         let mut new = Point::empty();
         for i in 0..3 {
-            new[i] = if self.x.is_some() {
-                other[i].map(|v| v.max(self[i].unwrap()))
+            new[i] = if self[i].is_some() {
+                other[i].map_or(self[i],|v| Some(v.max(self[i].unwrap())))
             } else { other[i] };
         }
         new
