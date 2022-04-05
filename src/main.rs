@@ -21,6 +21,12 @@ const WARN_SAFE_HEIGHT: f32 = 0.20; //emit a warning if min traversal height is 
 const FAIL_SAFE_HEIGHT: f32 = 0.1; //fail safe height check if min traversal height is lower than this
 
 fn main() {
+    println!("Validate Toolpath v1.0");
+    println!("Utility to prevent stupid toolpath mistakes");
+    println!("https://github.com/mileskerr/validate_toolpath");
+    println!("---");
+    println!("Please select a file...");
+
     let path = match get_path() {
         Ok(path) => { path }
         Err(error) => { eprintln!("Error: {}",error); return; }
@@ -38,9 +44,11 @@ fn main() {
     let warnings: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Warning).collect();
     let errors: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Error).collect();
 
-    let status = format!("Complete: {} passed, {} failed, {} warnings, {} errors", passed.len(), failed.len(), warnings.len(), errors.len());
+    let status = format!("COMPLETE: {} passed, {} failed, {} warnings, {} errors ", passed.len(), failed.len(), warnings.len(), errors.len());
+    println!("---");
     println!("{}",status);
-    println!("--------------------------------------------------");
+    println!("{}","press Ctrl-C to exit");
+    println!("");
     for result in failed {
         println!("{}",result);
     };
@@ -53,8 +61,7 @@ fn main() {
     for result in passed {
         println!("{}",result);
     };
-    println!("--------------------------------------------------");
-    println!("              press Ctrl-C to exit                ");
+    println!("");
     loop {}
 }
 
