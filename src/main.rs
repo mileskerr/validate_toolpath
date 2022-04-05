@@ -10,43 +10,42 @@ use std::path;
 use std::collections::HashMap;
 use native_dialog::{FileDialog};
 
-
-const PASS_FREQUENCY_THRESHOLD: usize = 80; //require at least this many lines of g-code in each pass
-const MIN_PASSES: usize = 2; //emit a warning if there are less than or equal to this number of passes
-const MAX_PASSES: usize = 10; //consider the program to be in error if it finds more passes than this
-const DEPTH_THRESHOLD: f32 = 0.0625; //the maximum amount the endmill should be allowed to cut into the table
-const MIN_OFFSET: f32 = -0.1; //fail offset check if southwest part corner is further southwest than this
-const MAX_OFFSET: f32 = 0.75; //fail offset check if southwest part corner is further northeast than this
-const WARN_SAFE_HEIGHT: f32 = 0.20; //emit a warning if min traversal height is lower than this
-const FAIL_SAFE_HEIGHT: f32 = 0.1; //fail safe height check if min traversal height is lower than this
+mod config;
 
 fn main() {
     println!("Validate Toolpath v1.0");
     println!("Utility to prevent stupid toolpath mistakes");
     println!("https://github.com/mileskerr/validate_toolpath");
     println!("---");
+
+    let config_items = config::read_config();
+
     println!("Please select a file...");
 
     let path = match get_path() {
         Ok(path) => { path }
-        Err(error) => { eprintln!("Error: {}",error); return; }
+        Err(error) => { eprintln!("Error: {}",error.red()); return; }
     };
     let contents = match get_file(path.clone()) {
         Ok(file) => { file }
-        Err(error) => { eprintln!("Error: {}",error); return; }
+        Err(error) => { eprintln!("Error: {}",error.red()); return; }
     };
 
     println!("Validating file \'{}\'...",path.display());
-    let results = check(&contents);
+    let results = check(&contents,&config_items);
 
     let passed: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Pass).collect();
     let failed: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Fail).collect();
     let warnings: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Warning).collect();
     let errors: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Error).collect();
 
-    let status = format!("COMPLETE: {} passed, {} failed, {} warnings, {} errors ", passed.len(), failed.len(), warnings.len(), errors.len());
+    let status = if (failed.len() + warnings.len() + errors.len()) == 0 {
+        format!("{}","SUCCESS! All checks passed".green())
+    } else {
+        format!("COMPLETE: {} passed, {} failed, {} warnings, {} errors ", passed.len(), failed.len(), warnings.len(), errors.len())
+    };
     println!("---");
-    println!("{}",status);
+    println!("{}",status.bold());
     println!("{}","press Ctrl-C to exit");
     println!("");
     for result in failed {
@@ -65,7 +64,7 @@ fn main() {
     loop {}
 }
 
-fn check(contents: &String) -> Vec<Outcome> {
+fn check(contents: &String, config_items: &HashMap<String,f32>) -> Vec<Outcome> {
     let mut tool = Tool::Unknown;
     let mut min = Point::empty();
     let mut cut_min = Point::empty();
@@ -113,10 +112,22 @@ fn check(contents: &String) -> Vec<Outcome> {
 
    
     vec![
-        check_safe_height(traverse_min),
-        check_depth(min,material_size),
-        check_offset(cut_min),
-        check_passes(heights),
+        check_safe_height(traverse_min,
+            *config_items.get("WARN_SAFE_HEIGHT").unwrap(),
+            *config_items.get("FAIL_SAFE_HEIGHT").unwrap(),
+        ),
+        check_depth(min,material_size,
+            *config_items.get("DEPTH_THRESHOLD").unwrap(),
+        ),
+        check_offset(cut_min,
+            *config_items.get("MIN_OFFSET").unwrap(),
+            *config_items.get("MAX_OFFSET").unwrap(),
+        ),
+        check_passes(heights,
+            *config_items.get("MIN_PASSES").unwrap() as usize,
+            *config_items.get("MAX_PASSES").unwrap() as usize,
+            *config_items.get("PASS_FREQUENCY_THRESHOLD").unwrap() as usize,
+        ),
     ]
 }
 
@@ -127,13 +138,13 @@ enum Tool {
     Unknown,
 }
 
-fn check_safe_height(traverse_min: f32) -> Outcome {
+fn check_safe_height(traverse_min: f32, warn_safe_height: f32, fail_safe_height: f32) -> Outcome {
     let out = Outcome::new("Min Safe Height");
-    if traverse_min <= FAIL_SAFE_HEIGHT {
+    if traverse_min <= fail_safe_height {
         return out.set(Status::Fail,
             format!("tool is in danger of colliding with screws:\nminimum traversing height detected: {}",traverse_min)
         );
-    } else if traverse_min <= WARN_SAFE_HEIGHT {
+    } else if traverse_min <= warn_safe_height {
         return out.set(Status::Warning,
             format!("tool may collide with screws:\nminimum traversing height detected: {}",traverse_min)
         );
@@ -149,19 +160,19 @@ fn check_safe_height(traverse_min: f32) -> Outcome {
 }
 
 
-fn check_passes(heights: HashMap<i32,usize>) -> Outcome {
+fn check_passes(heights: HashMap<i32,usize>, min_passes: usize, max_passes: usize, pass_freq_threshold: usize) -> Outcome {
     let out = Outcome::new("Number of Passes");
     let mut passes = 0;
     for (_,freq) in heights {
-        if freq > PASS_FREQUENCY_THRESHOLD {
+        if freq > pass_freq_threshold {
             passes += 1;
         }
     }
-    if (1..=MIN_PASSES).contains(&passes) {
+    if (1..=min_passes).contains(&passes) {
         return out.set(Status::Warning,
             format!("only {} passes detected",passes)
         );
-    } else if (MIN_PASSES..MAX_PASSES).contains(&passes) {
+    } else if (min_passes..max_passes).contains(&passes) {
         return out.set(Status::Pass,
             format!("{} passes detected",passes)
         );
@@ -173,15 +184,13 @@ fn check_passes(heights: HashMap<i32,usize>) -> Outcome {
 
 }
 
-
-
-fn check_depth(min: Point, material_size: Point) -> Outcome {
+fn check_depth(min: Point, material_size: Point, depth_threshold: f32) -> Outcome {
     let out = Outcome::new("Depth");
     if material_size.z.is_some() {
         let thickness = material_size.z.unwrap();
         if min.z.is_some() {
             let max_depth = thickness - min.z.unwrap();
-            if max_depth > thickness + DEPTH_THRESHOLD {
+            if max_depth > thickness + depth_threshold {
                 return out.set(Status::Fail,
                     format!("may cut too deep:\nmaterial thickness: {}\nmax cut depth: {}",thickness,max_depth)
                 );
@@ -200,16 +209,16 @@ fn check_depth(min: Point, material_size: Point) -> Outcome {
         "unable to check depth. This is may be a bug".into()
     );
 }
-fn check_offset(min: Point) -> Outcome {
+fn check_offset(min: Point, min_offset: f32, max_offset: f32) -> Outcome {
     let out = Outcome::new("Offset");
     if min.x.is_some() && min.y.is_some() {
         for i in 0..2 {
-            if min[i].unwrap() > MAX_OFFSET {
+            if min[i].unwrap() > max_offset {
                 return out.set(Status::Fail,
                     format!("toolpath may be offset:\nsouthwest corner of part is far from the origin, at ({}, {})",min.x.unwrap(),min.y.unwrap())
                 );
             }
-            if min[i].unwrap() < MIN_OFFSET {
+            if min[i].unwrap() < min_offset {
                 return out.set(Status::Fail,
                     format!("toolpath may be offset:\nsouthwest corner of part is negative, at ({}, {})",min.x.unwrap(),min.y.unwrap())
                 );
@@ -277,10 +286,10 @@ enum Status {
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Status::Pass => write!(f,"{}","PASS".green()),
-            Status::Fail => write!(f,"{}","FAIL".red()),
-            Status::Warning => write!(f,"{}","WARNING".yellow()),
-            Status::Error => write!(f,"{}","ERROR".red()),
+            Status::Pass => write!(f,"{}","PASS".green().bold()),
+            Status::Fail => write!(f,"{}","FAIL".red().bold()),
+            Status::Warning => write!(f,"{}","WARNING".yellow().bold()),
+            Status::Error => write!(f,"{}","ERROR".red().bold()),
         }
     }
 }
@@ -305,8 +314,6 @@ fn get_path() -> Result<path::PathBuf,String> {
     }
 }
 
-
-
 #[derive(Clone,Copy,Debug,PartialEq)]
 struct Point {
     x: Option<f32>,
@@ -323,11 +330,11 @@ impl Point {
     fn from_str(input: &str) -> Point {
         lazy_static! {
             static ref RE: [Regex;3] = [
-                Regex::new(r"X[= ]*-?[0-9]*\.[0-9]*").unwrap(),
-                Regex::new(r"Y[= ]*-?[0-9]*\.[0-9]*").unwrap(),
-                Regex::new(r"Z[= ]*-?[0-9]*\.[0-9]*").unwrap(),
+                Regex::new(r"X[= ]*-?[0-9]+\.[0-9]*").unwrap(),
+                Regex::new(r"Y[= ]*-?[0-9]+\.[0-9]*").unwrap(),
+                Regex::new(r"Z[= ]*-?[0-9]+\.[0-9]*").unwrap(),
             ];
-            static ref NUM_RE: Regex = Regex::new(r"-?[0-9]*\.[0-9]*").unwrap();
+            static ref NUM_RE: Regex = Regex::new(r"-?[0-9]+\.[0-9]*").unwrap();
         }
         let mut point = Point::empty();
         for i in 0..3 {
