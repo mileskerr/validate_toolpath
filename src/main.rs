@@ -1,6 +1,5 @@
 #[macro_use]
 extern crate lazy_static;
-use std::error::Error;
 use regex::Regex;
 use owo_colors::OwoColorize;
 use std::ops;
@@ -9,7 +8,7 @@ use std::env;
 use std::fs;
 use std::path;
 use std::collections::HashMap;
-use native_dialog::{FileDialog, MessageDialog, MessageType};
+use native_dialog::{FileDialog};
 
 
 const PASS_FREQUENCY_THRESHOLD: usize = 80; //require at least this many lines of g-code in each pass
@@ -18,11 +17,18 @@ const MAX_PASSES: usize = 10; //consider the program to be in error if it finds 
 const DEPTH_THRESHOLD: f32 = 0.0625; //the maximum amount the endmill should be allowed to cut into the table
 const MIN_OFFSET: f32 = -0.1; //fail offset check if southwest part corner is further southwest than this
 const MAX_OFFSET: f32 = 0.75; //fail offset check if southwest part corner is further northeast than this
+const WARN_SAFE_HEIGHT: f32 = 0.20; //emit a warning if min traversal height is lower than this
+const FAIL_SAFE_HEIGHT: f32 = 0.1; //fail safe height check if min traversal height is lower than this
 
 fn main() {
-    let path = get_path().unwrap();
-    let contents = get_file(path.clone()).unwrap();
-
+    let path = match get_path() {
+        Ok(path) => { path }
+        Err(error) => { eprintln!("Error: {}",error); return; }
+    };
+    let contents = match get_file(path.clone()) {
+        Ok(file) => { file }
+        Err(error) => { eprintln!("Error: {}",error); return; }
+    };
 
     println!("Validating file \'{}\'...",path.display());
     let results = check(&contents);
@@ -56,6 +62,7 @@ fn check(contents: &String) -> Vec<Outcome> {
     let mut tool = Tool::Unknown;
     let mut min = Point::empty();
     let mut cut_min = Point::empty();
+    let mut traverse_min: f32 = f32::MAX;
     let mut material_size = Point::empty();
     let mut heights: HashMap<i32,usize> = HashMap::new();
 
@@ -65,17 +72,21 @@ fn check(contents: &String) -> Vec<Outcome> {
             min = min.min(point);
             if point.z.is_some() && material_size.z.is_some() { //has z coordinate
                 let height = point.z.unwrap();
-                cut_min = cut_min.min(point);
-                if height < material_size.z.unwrap() {
+                let thickness = material_size.z.unwrap();
+                if height < thickness { //cutting
+                    cut_min = cut_min.min(point);
                     if tool == Tool::Endmill {
                         let height_int = (height * 1000.0) as i32;
-                        let mut count = heights.get_mut(&height_int);
+                        let count = heights.get_mut(&height_int);
                         if let Some(t) = count {
                             *t += 1
                         } else {
                             heights.insert(height_int,1);
                         }
                     }
+                }
+                if height >= thickness {
+                    traverse_min = (height-thickness).min(traverse_min);
                 }
             }
         }
@@ -92,8 +103,10 @@ fn check(contents: &String) -> Vec<Outcome> {
         }
     }
 
+
    
     vec![
+        check_safe_height(traverse_min),
         check_depth(min,material_size),
         check_offset(cut_min),
         check_passes(heights),
@@ -107,10 +120,32 @@ enum Tool {
     Unknown,
 }
 
+fn check_safe_height(traverse_min: f32) -> Outcome {
+    let out = Outcome::new("Min Safe Height");
+    if traverse_min <= FAIL_SAFE_HEIGHT {
+        return out.set(Status::Fail,
+            format!("tool is in danger of colliding with screws:\nminimum traversing height detected: {}",traverse_min)
+        );
+    } else if traverse_min <= WARN_SAFE_HEIGHT {
+        return out.set(Status::Warning,
+            format!("tool may collide with screws:\nminimum traversing height detected: {}",traverse_min)
+        );
+    } else if traverse_min == f32::MAX {
+        return out.set(Status::Error,
+            format!("could not detect minimum traversing height")
+        );
+    } else {
+        return out.set(Status::Pass,
+            format!("tool is not in danger of colliding with screws:\nminimum traversing height detected: {}",traverse_min)
+        );
+    }
+}
+
+
 fn check_passes(heights: HashMap<i32,usize>) -> Outcome {
-    let mut out = Outcome::new("Number of Passes");
+    let out = Outcome::new("Number of Passes");
     let mut passes = 0;
-    for (height,freq) in heights {
+    for (_,freq) in heights {
         if freq > PASS_FREQUENCY_THRESHOLD {
             passes += 1;
         }
@@ -134,7 +169,7 @@ fn check_passes(heights: HashMap<i32,usize>) -> Outcome {
 
 
 fn check_depth(min: Point, material_size: Point) -> Outcome {
-    let mut out = Outcome::new("Depth");
+    let out = Outcome::new("Depth");
     if material_size.z.is_some() {
         let thickness = material_size.z.unwrap();
         if min.z.is_some() {
@@ -159,7 +194,7 @@ fn check_depth(min: Point, material_size: Point) -> Outcome {
     );
 }
 fn check_offset(min: Point) -> Outcome {
-    let mut out = Outcome::new("Offset");
+    let out = Outcome::new("Offset");
     if min.x.is_some() && min.y.is_some() {
         for i in 0..2 {
             if min[i].unwrap() > MAX_OFFSET {
