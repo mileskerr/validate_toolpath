@@ -7,12 +7,16 @@ use std::fmt;
 use std::env;
 use std::fs;
 use std::path;
+use std::collections::HashMap;
 use native_dialog::{FileDialog, MessageDialog, MessageType};
 
 
-const DEPTH_THRESHOLD: f32 = 0.0625;
-const MIN_OFFSET: f32 = -0.1;
-const MAX_OFFSET: f32 = 0.75;
+const PASS_FREQUENCY_THRESHOLD: usize = 80; //require at least this many lines of g-code in each pass
+const MIN_PASSES: usize = 2; //emit a warning if there are fewer than this number of passes
+const MAX_PASSES: usize = 10; //consider the program to be in error if it finds more passes than this
+const DEPTH_THRESHOLD: f32 = 0.0625; //the maximum amount the endmill should be allowed to cut into the table
+const MIN_OFFSET: f32 = -0.1; //fail offset check if southwest part corner is further southwest than this
+const MAX_OFFSET: f32 = 0.75; //fail offset check if southwest part corner is further northeast than this
 
 fn main() {
     let path = get_path().unwrap();
@@ -32,6 +36,7 @@ fn check(contents: &String) -> Vec<Outcome> {
     let mut min = Point::empty();
     let mut cut_min = Point::empty();
     let mut material_size = Point::empty();
+    let mut depths: HashMap<i32,usize> = HashMap::new();
 
     for line in contents.lines() {
         if line.starts_with("(") && line.ends_with(")") {
@@ -44,12 +49,21 @@ fn check(contents: &String) -> Vec<Outcome> {
             let point = Point::from_str(line);
             min = min.min(point);
             if point.z.is_some() && material_size.z.is_some() {
-                if point.z.unwrap() < material_size.z.unwrap() {
+                let depth = point.z.unwrap();
+                if depth < material_size.z.unwrap() {
                     cut_min = cut_min.min(point);
+                }
+                let depth_int = (depth * 1000.0) as i32;
+                let mut count = depths.get_mut(&depth_int);
+                if let Some(t) = count {
+                    *t += 1
+                } else {
+                    depths.insert(depth_int,1);
                 }
             }
         }
     }
+    println!("{:?}",depths);
 
    
     println!("{:?}",material_size);
@@ -57,8 +71,35 @@ fn check(contents: &String) -> Vec<Outcome> {
     vec![
         check_depth(min,material_size),
         check_offset(cut_min),
+        check_passes(depths),
     ]
 }
+
+fn check_passes(depths: HashMap<i32,usize>) -> Outcome {
+    let mut out = Outcome::new("Check Passes");
+    let mut passes = 0;
+    for (depth,freq) in depths {
+        if freq > PASS_FREQUENCY_THRESHOLD {
+            passes += 1;
+        }
+    }
+    if (1..=MIN_PASSES).contains(&passes) {
+        return out.set(Status::Warning,
+            format!("only {} passes detected",passes)
+        );
+    } else if (MIN_PASSES..MAX_PASSES).contains(&passes) {
+        return out.set(Status::Pass,
+            format!("{} passes detected",passes)
+        );
+    } else {
+        return out.set(Status::Error,
+            format!("unable to detect number of passes")
+        );
+    }
+
+}
+
+
 
 fn check_depth(min: Point, material_size: Point) -> Outcome {
     let mut out = Outcome::new("Check Depth");
@@ -76,7 +117,7 @@ fn check_depth(min: Point, material_size: Point) -> Outcome {
                 );
             } else {
                 return out.set(Status::Pass,
-                    format!("( material thickness: {}, max cut depth: {} )",thickness,max_depth)
+                    format!("material thickness: {}, max cut depth: {}",thickness,max_depth)
                 );
             }
         }
@@ -101,7 +142,7 @@ fn check_offset(min: Point) -> Outcome {
             }
         }
         return out.set(Status::Pass,
-            format!("( southeast corner of part is near the origin, at ({}, {}) )",min.x.unwrap(), min.y.unwrap())
+            format!("southeast corner of part is near the origin, at ({}, {})",min.x.unwrap(), min.y.unwrap())
         );
     }
     return out.set(Status::Error,
@@ -140,6 +181,7 @@ impl fmt::Display for Outcome {
 enum Status {
     Pass,
     Fail,
+    Warning,
     Error,
 }
 impl fmt::Display for Status {
@@ -147,6 +189,7 @@ impl fmt::Display for Status {
         match self {
             Status::Pass => write!(f,"PASS"),
             Status::Fail => write!(f,"FAIL"),
+            Status::Warning => write!(f,"WARNING"),
             Status::Error => write!(f,"ERROR"),
         }
     }
