@@ -33,8 +33,8 @@ pub fn read_config() -> HashMap<String,f32> {
         ("DEPTH_THRESHOLD", 0.0625, "the maximum amount the endmill should be allowed to cut into the table"),
         ("MIN_OFFSET", -0.1, "fail offset check if southwest part corner is further southwest than this"),
         ("MAX_OFFSET", 0.75, "fail offset check if southwest part corner is further northeast than this"),
-        ("WARN_SAFE_HEIGHT", 0.75, "warning if min traversal height is lower than this"),
-        ("FAIL_SAFE_HEIGHT", 0.75, "failure if min traversal height is lower than this"),
+        ("WARN_SAFE_HEIGHT", 0.2, "warning if min traversal height is lower than this"),
+        ("FAIL_SAFE_HEIGHT", 0.1, "failure if min traversal height is lower than this"),
     );
 
     if let Ok(contents) = fs::read_to_string("./config.txt") {

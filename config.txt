@@ -30,11 +30,11 @@ MAX_OFFSET = 0.75
 
 
 //warning if min traversal height is lower than this
-//default: 0.75
-WARN_SAFE_HEIGHT = 0.75
+//default: 0.2
+WARN_SAFE_HEIGHT = 0.2
 
 
 //failure if min traversal height is lower than this
-//default: 0.75
-FAIL_SAFE_HEIGHT = 0.75
+//default: 0.1
+FAIL_SAFE_HEIGHT = 0.1
 

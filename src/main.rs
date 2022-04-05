@@ -16,10 +16,10 @@ fn main() {
     println!("Validate Toolpath v1.0");
     println!("Utility to prevent stupid toolpath mistakes");
     println!("https://github.com/mileskerr/validate_toolpath");
-    println!("---");
 
     let config_items = config::read_config();
 
+    println!("---");
     println!("Please select a file...");
 
     let path = match get_path() {
@@ -42,7 +42,9 @@ fn main() {
     let status = if (failed.len() + warnings.len() + errors.len()) == 0 {
         format!("{}","SUCCESS! All checks passed".green())
     } else {
-        format!("COMPLETE: {} passed, {} failed, {} warnings, {} errors ", passed.len(), failed.len(), warnings.len(), errors.len())
+        let warning_s = if warnings.len() == 1 { "warning" } else { "warnings" };
+        let error_s = if errors.len() == 1 { "error" } else { "errors" };
+        format!("COMPLETE: {} passed, {} failed, {} {warning_s}, {} {error_s} ", passed.len(), failed.len(), warnings.len(), errors.len())
     };
     println!("---");
     println!("{}",status.bold());
