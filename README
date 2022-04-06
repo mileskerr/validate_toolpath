@@ -1,0 +1,3 @@
+Checks for common mistakes in CNC router toolpath, so they're found before they mess up the part.
+
+Made for my robotics team, and unlikely to be useful to anyone who doesn't happen to be using the exact same software to run the exact same types of CNC parts.
