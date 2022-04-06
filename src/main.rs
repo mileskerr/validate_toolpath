@@ -6,15 +6,17 @@ use std::ops;
 use std::fmt;
 use std::env;
 use std::fs;
-use std::path;
+use std::fs::File;
+use std::io::Write;
+use std::path::{Path,PathBuf};
 use std::collections::{HashMap,HashSet};
 use native_dialog::{FileDialog};
 
 mod config;
 
 fn main() {
-    println!("Validate Toolpath v1.0");
-    println!("Utility to prevent stupid toolpath mistakes");
+    println!("Validate Toolpath v0.0");
+    println!("Utility to catch stupid toolpath mistakes");
     println!("https://github.com/mileskerr/validate_toolpath");
 
     let config_items = config::read_config();
@@ -384,19 +386,31 @@ impl fmt::Display for Status {
         }
     }
 }
-fn get_file(path: path::PathBuf) -> Result<String,String> {
+fn get_file(path: PathBuf) -> Result<String,String> {
     fs::read_to_string(path.clone()).map_err(|_| format!("couldn't read file: '{}'", path.display()))
 }
-fn get_path() -> Result<path::PathBuf,String> {
+fn get_path() -> Result<PathBuf,String> {
     if env::args().len() > 1 {
         let path = env::args().nth(1).unwrap();
-        path.parse::<path::PathBuf>().map_err(|_| "no such path".into())
+        path.parse::<PathBuf>().map_err(|_| "no such path".into())
     } else {
+        let open_path = if let Ok(contents) = fs::read_to_string(".last_path") {
+            contents.parse::<PathBuf>().unwrap()
+        } else {
+            "~".parse::<PathBuf>().unwrap()
+        };
         match FileDialog::new()
-            .set_location("~/Desktop")
+            .set_location(&open_path)
             .add_filter("Mach3Mill Toolpath", &["txt"])
             .show_open_single_file().transpose() {
             Some(r) => {
+                if let Ok(full_path) = &r {
+                    if let Some(p) = full_path.parent() {
+                        if let Ok(mut file) = File::create(".last_path") {
+                            file.write_all(p.to_str().unwrap().as_bytes()).unwrap();
+                        }
+                    }
+                }
                 r.map_err(|_| "invalid file".into())
             } None => {
                 Err("no file specified".into())
