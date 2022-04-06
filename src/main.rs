@@ -7,7 +7,7 @@ use std::fmt;
 use std::env;
 use std::fs;
 use std::path;
-use std::collections::HashMap;
+use std::collections::{HashMap,HashSet};
 use native_dialog::{FileDialog};
 
 mod config;
@@ -69,21 +69,31 @@ fn main() {
 fn check(contents: &String, config_items: &HashMap<String,f32>) -> Vec<Outcome> {
     let mut tool = Tool::Unknown;
     let mut min = Point::empty();
+    let mut max = Point::empty();
     let mut cut_min = Point::empty();
     let mut traverse_min: f32 = f32::MAX;
     let mut material_size = Point::empty();
     let mut heights: HashMap<i32,usize> = HashMap::new();
+    let mut holes: HashSet<(i32,i32)> = HashSet::new();
+
+    let mut endmill_path = Outcome::new_full("Endmill Path", Status::Pass,
+        "endmill does not collide with any preexisting holes".into()
+    );
+    let mut order_of_op = Outcome::new_full("Order of Operations", Status::Pass,
+        "no drill path after endmill path".into()
+    );
 
     for line in contents.lines() {
         if line.find("G0").is_some() || line.find("G1").is_some() { //moving
             let point = Point::from_str(line);
             min = min.min(point);
+            max = max.max(point);
             if point.z.is_some() && material_size.z.is_some() { //has z coordinate
                 let height = point.z.unwrap();
                 let thickness = material_size.z.unwrap();
                 if height < thickness { //cutting
                     cut_min = cut_min.min(point);
-                    if tool == Tool::Endmill {
+                    if let Tool::Endmill(size) = tool {
                         let height_int = (height * 1000.0) as i32;
                         let count = heights.get_mut(&height_int);
                         if let Some(t) = count {
@@ -91,6 +101,24 @@ fn check(contents: &String, config_items: &HashMap<String,f32>) -> Vec<Outcome> 
                         } else {
                             heights.insert(height_int,1);
                         }
+                        if let Some(s) = size {
+                        if let Some(x) = point.x {
+                        if let Some(y) = point.y {
+                            for hole in &holes {
+                                let x_dist = x - ((hole.0 as f32)/1000.0);
+                                let y_dist = y - ((hole.1 as f32)/1000.0);
+                                if (x_dist * x_dist + y_dist * y_dist).sqrt() <= s {
+                                    endmill_path = endmill_path.set(Status::Fail,
+                                        format!("endmill may collide with drilled hole at ({},{})",x,y)
+                                    );
+                                }
+                            }
+                        }}}
+                    } else if let Tool::Drill(_) = tool {
+                        if let Some(x) = point.x {
+                        if let Some(y) = point.y {
+                            holes.insert(((x * 1000.0) as i32, (y * 1000.0) as i32));
+                        }}
                     }
                 }
                 if height >= thickness {
@@ -104,14 +132,17 @@ fn check(contents: &String, config_items: &HashMap<String,f32>) -> Vec<Outcome> 
                 material_size = point;
             }
             if line.find("Tool: Drill").is_some() {
-                tool = Tool::Drill;
+                if let Tool::Endmill(_) = tool {
+                    order_of_op = order_of_op.set(Status::Warning,
+                        format!("drilling after endmilling detected. Please check order of operations")
+                    );
+                }
+                tool = Tool::Drill(get_tool_size(line));
             } else if line.find("Tool: End Mill").is_some() {
-                tool = Tool::Endmill;
+                tool = Tool::Endmill(get_tool_size(line));
             }
         }
     }
-
-
    
     vec![
         check_safe_height(traverse_min,
@@ -130,14 +161,72 @@ fn check(contents: &String, config_items: &HashMap<String,f32>) -> Vec<Outcome> 
             *config_items.get("MAX_PASSES").unwrap() as usize,
             *config_items.get("PASS_FREQUENCY_THRESHOLD").unwrap() as usize,
         ),
+        check_dimensions(max,
+            *config_items.get("MACHINE_SIZE_X").unwrap(),
+            *config_items.get("MACHINE_SIZE_Y").unwrap(),
+        ),
+        endmill_path,
+        order_of_op,
     ]
 }
 
-#[derive(PartialEq,Clone)]
+fn get_tool_size(line: &str) -> Option<f32> {
+    lazy_static! {
+        static ref INCHES: Regex = Regex::new(r#"\{.*[0-9]*\.?[0-9]+ *".*\}"#).unwrap();
+        static ref MILIS: Regex = Regex::new(r"\{.*[0-9]*\.?[0-9]+ *mm.*\}").unwrap();
+    }
+    if let Some(size) = INCHES.find(line).map(|ma| {
+        let number = NUM_RE.find(ma.as_str()).unwrap().as_str();
+        number.parse::<f32>().unwrap()
+    }) {
+        Some(size)
+    }
+    else if let Some(size) = MILIS.find(line).map(|ma| {
+        let number = NUM_RE.find(ma.as_str()).unwrap().as_str();
+        number.parse::<f32>().unwrap()
+    }) {
+        Some(size * 0.0394)
+    } else {
+        None
+    }
+}
+
+
+lazy_static! {
+    static ref NUM_RE: Regex = Regex::new(r"-?[0-9]*\.?[0-9]+").unwrap();
+}
+
+#[derive(PartialEq,Clone,Debug)]
 enum Tool {
-    Drill,
-    Endmill,
+    Drill(Option<f32>),
+    Endmill(Option<f32>),
     Unknown,
+}
+
+
+fn check_dimensions(max: Point, machine_size_x: f32, machine_size_y: f32) -> Outcome {
+    let out = Outcome::new("Part Dimensions");
+    let max_x = if max.x.is_some() { max.x.unwrap() } else { return out; };
+    let max_y = if max.y.is_some() { max.y.unwrap() } else { return out; };
+    if max_x > machine_size_x || max_y > machine_size_y {
+        return out.set(Status::Fail,
+            format!("part dimensions exceed machine dimensions:\npart dimensions: {}x{}, machine dimensions: {}x{}\nif machine dimensions are incorrect, they can be changed in the config",
+                max_x,
+                max_y,
+                machine_size_x,
+                machine_size_y,
+            )
+        );
+    } else {
+        return out.set(Status::Pass,
+            format!("part dimensions are within machine dimensions:\npart dimensions: {}x{}, machine dimensions: {}x{}",
+                max_x,
+                max_y,
+                machine_size_x,
+                machine_size_y,
+            )
+        );
+    }
 }
 
 fn check_safe_height(traverse_min: f32, warn_safe_height: f32, fail_safe_height: f32) -> Outcome {
@@ -266,7 +355,7 @@ impl fmt::Display for Outcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut message = self.message.clone();
         message.insert_str(0," > ");
-        message = message.replace('\n', "\n    ");
+        message = message.replace('\n', "\n   > ");
         match self.status {
             Status::Pass => {
                 write!(f, "[{}] {}:\n{}", self.status, self.name, message.cyan())
@@ -336,7 +425,6 @@ impl Point {
                 Regex::new(r"Y[= ]*-?[0-9]+\.[0-9]*").unwrap(),
                 Regex::new(r"Z[= ]*-?[0-9]+\.[0-9]*").unwrap(),
             ];
-            static ref NUM_RE: Regex = Regex::new(r"-?[0-9]+\.[0-9]*").unwrap();
         }
         let mut point = Point::empty();
         for i in 0..3 {

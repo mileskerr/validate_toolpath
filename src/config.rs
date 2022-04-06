@@ -27,7 +27,8 @@ macro_rules! config_items {
 
 pub fn read_config() -> HashMap<String,f32> {
     let (mut config_items,DEFAULT_CONFIG) = config_items!(
-        ("PASS_FREQUENCY_THRESHOLD", 80.0, "require at least this many lines of g-code in each pass"),
+        ("MACHINE_SIZE_X", 24.0, "width of machine area in inches"),
+        ("MACHINE_SIZE_Y", 48.0, "depth of machine area in inches"),
         ("MIN_PASSES", 2.0, "warning if there are less than or equal to this number of passes"),
         ("MAX_PASSES", 10.0, "consider the program to be in error if it finds more passes than this"),
         ("DEPTH_THRESHOLD", 0.0625, "the maximum amount the endmill should be allowed to cut into the table"),
@@ -35,6 +36,7 @@ pub fn read_config() -> HashMap<String,f32> {
         ("MAX_OFFSET", 0.75, "fail offset check if southwest part corner is further northeast than this"),
         ("WARN_SAFE_HEIGHT", 0.2, "warning if min traversal height is lower than this"),
         ("FAIL_SAFE_HEIGHT", 0.1, "failure if min traversal height is lower than this"),
+        ("PASS_FREQUENCY_THRESHOLD", 50.0, "require at least this many lines of g-code in each pass"),
     );
 
     if let Ok(contents) = fs::read_to_string("./config.txt") {

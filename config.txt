@@ -1,7 +1,12 @@
 
-//require at least this many lines of g-code in each pass
-//default: 80.0
-PASS_FREQUENCY_THRESHOLD = 80.0
+//width of machine area in inches
+//default: 24.0
+MACHINE_SIZE_X = 24.0
+
+
+//depth of machine area in inches
+//default: 48.0
+MACHINE_SIZE_Y = 48.0
 
 
 //warning if there are less than or equal to this number of passes
@@ -37,4 +42,9 @@ WARN_SAFE_HEIGHT = 0.2
 //failure if min traversal height is lower than this
 //default: 0.1
 FAIL_SAFE_HEIGHT = 0.1
+
+
+//require at least this many lines of g-code in each pass
+//default: 50.0
+PASS_FREQUENCY_THRESHOLD = 50.0
 
