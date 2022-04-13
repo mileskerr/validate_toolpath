@@ -1,21 +1,21 @@
 #[macro_use]
 extern crate lazy_static;
 use regex::Regex;
-use owo_colors::OwoColorize;
 use std::ops;
 use std::fmt;
 use std::env;
 use std::fs;
 use std::fs::File;
-use std::io::Write;
-use std::path::{Path,PathBuf};
+use std::path::PathBuf;
 use std::collections::{HashMap,HashSet};
 use native_dialog::{FileDialog};
+use std::io::Write;
+use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
 mod config;
 
 fn main() {
-    println!("Validate Toolpath v0.0");
+    println!("Validate Toolpath v1.2");
     println!("Utility to catch stupid toolpath mistakes");
     println!("https://github.com/mileskerr/validate_toolpath");
 
@@ -26,11 +26,11 @@ fn main() {
 
     let path = match get_path() {
         Ok(path) => { path }
-        Err(error) => { eprintln!("Error: {}",error.red()); return; }
+        Err(error) => { eprintln!("Error: {}",error); return; }
     };
     let contents = match get_file(path.clone()) {
         Ok(file) => { file }
-        Err(error) => { eprintln!("Error: {}",error.red()); return; }
+        Err(error) => { eprintln!("Error: {}",error); return; }
     };
 
     println!("Validating file \'{}\'...",path.display());
@@ -41,15 +41,18 @@ fn main() {
     let warnings: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Warning).collect();
     let errors: Vec<Outcome> = results.clone().into_iter().filter(|r| r.status == Status::Error).collect();
 
-    let status = if (failed.len() + warnings.len() + errors.len()) == 0 {
-        format!("{}","SUCCESS! All checks passed".green())
+    println!("---");
+    let mut stdout = StandardStream::stdout(ColorChoice::Always);
+    if (failed.len() + warnings.len() + errors.len()) == 0 {
+        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green))).unwrap();
+        println!("{}","SUCCESS! All checks passed")
     } else {
+        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue))).unwrap();
         let warning_s = if warnings.len() == 1 { "warning" } else { "warnings" };
         let error_s = if errors.len() == 1 { "error" } else { "errors" };
-        format!("COMPLETE: {} passed, {} failed, {} {warning_s}, {} {error_s} ", passed.len(), failed.len(), warnings.len(), errors.len())
+        println!("COMPLETE: {} passed, {} failed, {} {warning_s}, {} {error_s} ", passed.len(), failed.len(), warnings.len(), errors.len())
     };
-    println!("---");
-    println!("{}",status.bold());
+    stdout.set_color(ColorSpec::new().set_fg(None)).unwrap();
     println!("{}","press Ctrl-C to exit");
     println!("");
     for result in failed {
@@ -123,7 +126,7 @@ fn check(contents: &String, config_items: &HashMap<String,f32>) -> Vec<Outcome> 
                         }}
                     }
                 }
-                if height >= thickness {
+                if height > thickness {
                     traverse_min = (height-thickness).min(traverse_min);
                 }
             }
@@ -269,9 +272,13 @@ fn check_passes(heights: HashMap<i32,usize>, min_passes: usize, max_passes: usiz
         return out.set(Status::Pass,
             format!("{} passes detected",passes)
         );
+    } else if (max_passes..15).contains(&passes) {
+        return out.set(Status::Warning,
+            format!("{} passes detected, too many?",passes)
+        );
     } else {
         return out.set(Status::Error,
-            format!("unable to detect number of passes")
+            format!("could not detect number of passes")
         );
     }
 
@@ -299,7 +306,7 @@ fn check_depth(min: Point, material_size: Point, depth_threshold: f32) -> Outcom
         }
     }
     return out.set(Status::Error,
-        "unable to check depth. This is may be a bug".into()
+        "unable to check depth".into()
     );
 }
 fn check_offset(min: Point, min_offset: f32, max_offset: f32) -> Outcome {
@@ -322,7 +329,7 @@ fn check_offset(min: Point, min_offset: f32, max_offset: f32) -> Outcome {
         );
     }
     return out.set(Status::Error,
-        "unable to check offset. This is may be a bug".into()
+        "unable to check offset".into()
     );
 }
 
@@ -336,7 +343,7 @@ impl Outcome {
     fn new(name: &str) -> Outcome {
         Outcome {
             name: name.into(),
-            message: "if you are reading this, there is a bug in the code.".into(),
+            message: "unknown error. make sure the input file is a valid toolpath".into(),
             status: Status::Error,
         }
     }
@@ -360,14 +367,36 @@ impl fmt::Display for Outcome {
         message = message.replace('\n', "\n   > ");
         match self.status {
             Status::Pass => {
-                write!(f, "[{}] {}:\n{}", self.status, self.name, message.cyan())
+                let mut stdout = StandardStream::stdout(ColorChoice::Always);
+                stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green))).unwrap();
+                write!(f, "[{}] ", self.status);
+                stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan))).unwrap();
+                write!(f, "{}:\n", self.name);
+                stdout.set_color(ColorSpec::new().set_fg(None)).unwrap();
+                write!(f, "{}", message)
+            }
+            Status::Warning => {
+                let mut stdout = StandardStream::stdout(ColorChoice::Always);
+                stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow))).unwrap();
+                write!(f, "[{}] ", self.status);
+                stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan))).unwrap();
+                write!(f, "{}:\n", self.name);
+                stdout.set_color(ColorSpec::new().set_fg(None)).unwrap();
+                write!(f, "{}", message)
             }
             _=> {
-                write!(f, "[{}] {}:\n{}", self.status, self.name, message.red())
+                let mut stdout = StandardStream::stdout(ColorChoice::Always);
+                stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red))).unwrap();
+                write!(f, "[{}] ", self.status);
+                stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan))).unwrap();
+                write!(f, "{}:\n", self.name);
+                stdout.set_color(ColorSpec::new().set_fg(None)).unwrap();
+                write!(f, "{}", message)
             }
         }
     }
 }
+
 
 #[derive(PartialEq, Clone)]
 enum Status {
@@ -379,10 +408,10 @@ enum Status {
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Status::Pass => write!(f,"{}","PASS".green().bold()),
-            Status::Fail => write!(f,"{}","FAIL".red().bold()),
-            Status::Warning => write!(f,"{}","WARNING".yellow().bold()),
-            Status::Error => write!(f,"{}","ERROR".red().bold()),
+            Status::Pass => write!(f,"{}","PASS"),
+            Status::Fail => write!(f,"{}","FAIL"),
+            Status::Warning => write!(f,"{}","WARNING"),
+            Status::Error => write!(f,"{}","ERROR"),
         }
     }
 }
@@ -429,6 +458,7 @@ impl Point {
     fn empty() -> Point {
         Point { x: None, y: None, z: None }
     }
+    #[allow(dead_code)]
     fn new(x: Option<f32>, y: Option<f32>, z: Option<f32>) -> Point {
         Point { x, y, z }
     }

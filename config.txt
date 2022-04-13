@@ -1,50 +1,50 @@
 
-//width of machine area in inches
-//default: 24.0
-MACHINE_SIZE_X = 24.0
+//width of machine area in inches
+//default: 24.0
+MACHINE_SIZE_X = 24.0
 
 
-//depth of machine area in inches
-//default: 48.0
-MACHINE_SIZE_Y = 48.0
+//depth of machine area in inches
+//default: 48.0
+MACHINE_SIZE_Y = 48.0
 
 
-//warning if there are less than or equal to this number of passes
-//default: 2.0
-MIN_PASSES = 2.0
+//warning if there are less than or equal to this number of passes
+//default: 2.0
+MIN_PASSES = 2.0
 
 
-//consider the program to be in error if it finds more passes than this
-//default: 10.0
-MAX_PASSES = 10.0
+//consider the program to be in error if it finds more passes than this
+//default: 10.0
+MAX_PASSES = 10.0
 
 
-//the maximum amount the endmill should be allowed to cut into the table
-//default: 0.0625
-DEPTH_THRESHOLD = 0.0625
+//the maximum amount the endmill should be allowed to cut into the table
+//default: 0.0625
+DEPTH_THRESHOLD = 0.0625
 
 
-//fail offset check if southwest part corner is further southwest than this
-//default: -0.1
-MIN_OFFSET = -0.1
+//fail offset check if southwest part corner is further southwest than this
+//default: -0.2
+MIN_OFFSET = -0.2
 
 
-//fail offset check if southwest part corner is further northeast than this
-//default: 0.75
-MAX_OFFSET = 0.75
+//fail offset check if southwest part corner is further northeast than this
+//default: 0.75
+MAX_OFFSET = 0.75
 
 
-//warning if min traversal height is lower than this
-//default: 0.2
-WARN_SAFE_HEIGHT = 0.2
+//warning if min traversal height is lower than this
+//default: 0.15
+WARN_SAFE_HEIGHT = 0.15
 
 
-//failure if min traversal height is lower than this
-//default: 0.1
-FAIL_SAFE_HEIGHT = 0.1
+//failure if min traversal height is lower than this
+//default: 0.1
+FAIL_SAFE_HEIGHT = 0.1
 
 
-//require at least this many lines of g-code in each pass
-//default: 50.0
-PASS_FREQUENCY_THRESHOLD = 50.0
+//require at least this many lines of g-code in each pass
+//default: 20.0
+PASS_FREQUENCY_THRESHOLD = 20.0
 
